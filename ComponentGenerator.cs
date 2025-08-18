@@ -18,61 +18,35 @@ internal partial class ComponentGenerator : IIncrementalGenerator
         isEnabledByDefault: true,
         description: "标记不同类型的 XML 元素名不能重复.");
 
-    public static string AttributeName => "SilkyUIFramework.Attributes.XmlElementMappingAttribute";
+    public static readonly string AttributeName = "SilkyUIFramework.Attributes.XmlElementMappingAttribute";
+    public static readonly string ElementGroupClassName = "SilkyUIFramework.UIElementGroup";
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         var allSymbol = context.CompilationProvider.Select((c, _) =>
         {
+            // 获取特性的 TypeSymbol
+            if (c.GetTypeByMetadataName(AttributeName) is not { } targetAttributeSymbol) return [];
+
             var result = ImmutableArray.CreateBuilder<(string Alias, INamedTypeSymbol TypeSymbol)>();
 
-            var targetAttributeSymbol = c.GetTypeByMetadataName(AttributeName);
-            if (targetAttributeSymbol == null) return [];
-
-            void VisitSymbol(INamespaceSymbol ns, ImmutableArray<(string, INamedTypeSymbol)>.Builder result)
+            c.GlobalNamespace.ForEachTypeSymbol((typeSymbol) =>
             {
-                foreach (var member in ns.GetMembers())
+                // 所有 别名(alias) and TypeSymbol
+                foreach (var attr in typeSymbol.GetAttributes())
                 {
-                    if (member is INamespaceSymbol childNS)
+                    if (SymbolEqualityComparer.Default.Equals(attr.AttributeClass, targetAttributeSymbol))
                     {
-                        VisitSymbol(childNS, result);
-                    }
-                    else if (member is INamedTypeSymbol typeSymbol)
-                    {
-                        foreach (var attr in typeSymbol.GetAttributes())
-                        {
-                            if (SymbolEqualityComparer.Default.Equals(attr.AttributeClass, targetAttributeSymbol))
-                            {
-                                var alias = attr.ConstructorArguments[0].Value as string;
-                                result.Add((alias, typeSymbol));
-                                continue;
-                            }
-                        }
+                        var alias = attr.ConstructorArguments[0].Value as string;
+                        if (!string.IsNullOrWhiteSpace(alias)) result.Add((alias, typeSymbol));
                     }
                 }
-            }
+            });
 
-            VisitSymbol(c.GlobalNamespace, result);
             return result.ToImmutable();
         });
 
-
-        // 监听 XmlElementMappingAttribute 特性
-        var xmlMappedTypes = context.SyntaxProvider.ForAttributeWithMetadataName(
-                AttributeName,
-                predicate: static (syntaxNode, _) => syntaxNode is ClassDeclarationSyntax,
-                transform: static (context, cancellationToken) =>
-                {
-                    var alias = context.Attributes[0].ConstructorArguments[0].Value as string;
-                    var typeSymbol = context.TargetSymbol as INamedTypeSymbol;
-
-                    var attributeSyntax = context.Attributes[0].ApplicationSyntaxReference?.GetSyntax(cancellationToken);
-                    var location = attributeSyntax?.GetLocation() ?? Location.None;
-
-                    return (Alias: alias, TypeSymbol: typeSymbol, Location: location);
-                }).Collect();
-
-        // 筛选 .xml 后缀的文件
+        // 筛选 .xml 后缀的文件, 并转换为 document
         var xmlDocuments = context.AdditionalTextsProvider
             .Where(f => Path.GetExtension(f.Path).Equals(".xml", StringComparison.OrdinalIgnoreCase))
             .Select((file, _) =>
@@ -80,71 +54,47 @@ internal partial class ComponentGenerator : IIncrementalGenerator
                 try
                 {
                     var document = XDocument.Parse(file.GetText()?.ToString());
-
-                    if (string.IsNullOrEmpty(document.Root.Attribute("Class").Value))
-                        return null;
-
+                    if (string.IsNullOrWhiteSpace(document.Root?.Attribute("Class")?.Value)) return null;
                     return document;
                 }
-                catch { }
-
-                return null;
+                catch { return null; }
             }).Where(doc => doc != null);
 
         // 所有类语法
         var classSyntaxProvider = context.SyntaxProvider.CreateSyntaxProvider(
             predicate: static (syntaxNode, _) => syntaxNode is ClassDeclarationSyntax,
-            transform: static (context, _) => context.SemanticModel.GetDeclaredSymbol(context.Node) as INamedTypeSymbol).Collect();
+            transform: static (context, _) => context.SemanticModel.GetDeclaredSymbol(context.Node) as INamedTypeSymbol)
+            .Where(symbol => symbol.InheritsFrom(ElementGroupClassName)).Collect();
 
-        // 找到 XML 绑定的 Class 的 TypeSymbol
+        // 找到 XML 绑定的 Class 的 TypeSymbol, 并筛选掉类型映射失败的组
         var provider = xmlDocuments
             .Combine(classSyntaxProvider).Combine(allSymbol)
             .Select((pair, _) =>
             {
-                var ((document, symbols), mapping) = pair;
+                var ((doc, groupTypeSymbols), mapping) = pair;
 
-                var className = document.Root.Attribute("Class").Value;
-                var typeSymbol = symbols.FirstOrDefault(symbols => symbols.ToDisplayString().Equals(className));
+                var className = doc.Root.Attribute("Class").Value;
+                var typeSymbol = groupTypeSymbols.FirstOrDefault(symbols => symbols.ToDisplayString().Equals(className));
 
-                return (document, typeSymbol, mapping);
+                return (doc, typeSymbol, mapping);
             }).Where((args) => args.typeSymbol != null);
 
         // 注册源输出
         context.RegisterSourceOutput(provider, (spc, data) =>
         {
-            var (document, typeSymbol, mappings) = data;
+            var (doc, typeSymbol, mappings) = data;
 
             var duplicates = mappings.GroupBy(x => x.Alias).Where(g => g.Count() > 1).ToArray();
+            if (duplicates.Length > 0) return;
 
-            // 如果有重复的不会生成代码
-            if (duplicates.Length > 0)
-            {
-                //foreach (var group in duplicates)
-                //{
-                //    foreach (var item in group)
-                //    {
-                //        // 报告重复别名错误
-                //        var diagnostic = Diagnostic.Create(DuplicateElementNameRule, item.Location, item.Alias);
-                //        spc.ReportDiagnostic(diagnostic);
-                //    }
-                //}
-
-                return;
-            }
-
-            // 获取映射表
-            var eMappingTable = mappings.ToDictionary(a => a.Alias, b => b.TypeSymbol);
+            var mappingTable = mappings.ToDictionary(a => a.Alias, b => b.TypeSymbol);
 
             try
             {
-                if (document.Root is not { } root) return;
+                ComponentGeneratorLogic.AliasToTypeSymbolMapping = mappingTable;
+                var code = ComponentGeneratorLogic.GenCode(doc.Root, typeSymbol);
 
-                var fullName = root.Attribute("Class").Value;
-
-                ComponentGeneratorLogic.AliasToTypeSymbolMapping = eMappingTable;
-                var code = ComponentGeneratorLogic.GenCode(root, typeSymbol);
-
-                spc.AddSource($"{string.Join(".", fullName)}.g.cs", SourceText.From(code, System.Text.Encoding.UTF8));
+                spc.AddSource($"{typeSymbol.ToDisplayString()}.g.cs", SourceText.From(code, System.Text.Encoding.UTF8));
             }
             catch { }
         });

@@ -5,6 +5,11 @@ namespace SilkyUIAnalyzer;
 
 internal static class ParseHelper
 {
+    /// <summary>
+    /// 将 " 替换为 \"，然后将 \" 替换为 \\"
+    /// </summary>
+    /// <param name="input"></param>
+    /// <returns></returns>
     public static string EscapeString(string input) => input?.Replace("\"", "\\\"").Replace("\\", "\\\\") ?? string.Empty;
 
     public static void ParseClassFullName(string fullName, out string ns, out string className)
@@ -27,7 +32,7 @@ internal static class ParseHelper
         {
             case SpecialType.System_String:
             {
-                rValue = EscapeString(value);
+                rValue = $"\"{EscapeString(value)}\"";
                 return true;
             }
             // 布尔类型
