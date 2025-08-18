@@ -55,29 +55,27 @@ internal static class ComponentGeneratorLogic
                         if (_contentLoaded) return;
                         _contentLoaded = true;
 
-            {{GeneratePropertyAssignments(typeSymbol, root.Attributes(), "this", 12)}}
+            {{GeneratePropertyAssignments(typeSymbol, root.Attributes(), null, 12)}}
+            {{GenerateElementInitialization(typeSymbol, root, null, 12)}}
             """);
 
-            if (root.HasElements)
-            {
-                var indent = new string(' ', 12);
-                foreach (var item in root.Elements())
-                {
-                    if (!AliasToTypeSymbolMapping.TryGetValue(item.Name.LocalName, out var itemTypeSymbol)) continue;
+            //if (root.HasElements)
+            //{
+            //    var indent = new string(' ', 12);
+            //    foreach (var item in root.Elements())
+            //    {
+            //        if (!AliasToTypeSymbolMapping.TryGetValue(item.Name.LocalName, out var itemTypeSymbol)) continue;
 
-                    var (elementCode, variableName) = GenerateElementInitialization(itemTypeSymbol, item, 12);
-                    code.Append(elementCode);
+            //        var (elementCode, variableName) = GenerateElementInitialization(itemTypeSymbol, item, 12);
+            //        code.Append(elementCode);
 
-                    // 映射
-                    if (item.Attribute("Name") is { } nameAttr && ValidMemberName.Contains(nameAttr.Value))
-                    {
-                        code.AppendLine($"{indent}{nameAttr.Value} = {variableName};");
-                    }
-
-                    // 添加到类中
-                    code.AppendLine($"{indent}Add({variableName});");
-                }
-            }
+            //        if (item.Attribute("Name") is { } nameAttr && ValidMemberName.Contains(nameAttr.Value))
+            //        {
+            //            code.AppendLine($"{indent}{nameAttr.Value} = {variableName};");
+            //        }
+            //        code.AppendLine($"{indent}Add({variableName});");
+            //    }
+            //}
 
             return code.AppendLine($$"""
                     }
@@ -123,45 +121,6 @@ internal static class ComponentGeneratorLogic
         return code.ToString();
     }
 
-
-    /// <summary>
-    /// 生成属性赋值代码，将 XML 属性值赋给目标对象的对应属性。
-    /// </summary>
-    /// <param name="targetTypeSymbol">目标类型的符号信息，用于反射获取属性元数据。</param>
-    /// <param name="attributes">XML 属性集合，其值将被解析并赋值给目标属性。</param>
-    /// <param name="targetVariable">目标实例的变量名（如 "obj" 或 "this"），用于生成赋值语句。</param>
-    /// <param name="indentLevel">代码缩进级别（空格数），控制生成代码的格式化。</param>
-    /// <returns>生成的属性赋值代码（如 "obj.Property = value;"）。</returns>
-    /// <remarks>
-    /// 1. 仅处理可写属性（<see cref="IPropertySymbol.SetMethod"/> 不为 null）。
-    /// 2. 跳过 <see cref="SpecialAttributes"/> 中定义的保留属性（如 "Name"）。
-    /// 3. 使用 <see cref="ParseHelper.TryParseProperty"/> 解析属性值，确保类型安全。
-    /// 4. 生成的代码格式示例：<c>"    target.Property = parsedValue;"</c>。
-    /// </remarks>
-    private static string GeneratePropertyAssignments(INamedTypeSymbol targetTypeSymbol, IEnumerable<XAttribute> attributes, string targetVariable, int indentLevel)
-    {
-        var indent = new string(' ', indentLevel);
-        var code = new StringBuilder();
-
-        foreach (var attribute in attributes)
-        {
-            var propertyName = attribute.Name.LocalName;
-            if (SpecialAttributes.Contains(propertyName)) continue;
-
-            var memberSymbols = targetTypeSymbol.GetOnlyMembers(propertyName);
-            if (memberSymbols.Count == 0 ||
-                memberSymbols.First() is not IPropertySymbol propSymbol ||
-                propSymbol.SetMethod == null) continue;
-
-            if (ParseHelper.TryParseProperty(propSymbol, attribute.Value, out var rValue))
-            {
-                code.AppendLine($"{indent}{targetVariable}.{propertyName} = {rValue};");
-            }
-        }
-
-        return code.ToString();
-    }
-
     /// <summary>
     /// 递归生成 XML 元素对应的对象初始化代码，并返回生成的实例变量名和初始化逻辑。
     /// </summary>
@@ -184,17 +143,19 @@ internal static class ComponentGeneratorLogic
     /// 4. 若子元素有 "Name" 属性且名称有效（<see cref="ValidMemberName"/>），则额外生成属性赋值代码。<br/>
     /// 5. 默认调用 `Add` 方法将子元素添加到父实例（适用于集合类）。
     /// </remarks>
-    private static (string code, string variableName) GenerateElementInitialization(INamedTypeSymbol typeSymbol, XElement element, int indentLevel)
+    private static string GenerateElementInitialization(INamedTypeSymbol typeSymbol, XElement element, string variableName, int indentLevel)
     {
         var indent = new string(' ', indentLevel);
         var code = new StringBuilder();
 
-        var uniqueVariableName = $"element{++_variableCounter}";
-
-        code.AppendLine($"{indent}var {uniqueVariableName} = new global::{typeSymbol}();");
+        if (variableName != null)
+        {
+            code.AppendLine($"{indent}var {variableName} = new global::{typeSymbol}();");
+        }
+        else variableName = "this";
 
         // 属性赋值
-        code.Append(GeneratePropertyAssignments(typeSymbol, element.Attributes(), uniqueVariableName, indentLevel));
+        code.Append(GeneratePropertyAssignments(typeSymbol, element.Attributes(), variableName, indentLevel));
 
         if (element.HasElements)
         {
@@ -202,17 +163,58 @@ internal static class ComponentGeneratorLogic
             {
                 if (!AliasToTypeSymbolMapping.TryGetValue(item.Name.LocalName, out var itemTypeSymbol)) continue;
 
-                var (childCode, childVariableName) = GenerateElementInitialization(itemTypeSymbol, item, indentLevel);
+                var childVariableName = $"element{++_variableCounter}";
+                var childCode = GenerateElementInitialization(itemTypeSymbol, item, childVariableName, indentLevel);
                 code.Append(childCode);
 
                 if (item.Attribute("Name") is { } nameAttr && ValidMemberName.Contains(nameAttr.Value))
                 {
                     code.AppendLine($"{indent}{nameAttr.Value} = {childVariableName};");
                 }
-                code.AppendLine($"{indent}{uniqueVariableName}.Add({childVariableName});");
+                code.AppendLine($"{indent}{variableName}.Add({childVariableName});");
             }
         }
 
-        return (code.ToString(), uniqueVariableName);
+        return code.ToString();
+    }
+
+    /// <summary>
+    /// 生成属性赋值代码，将 XML 属性值赋给目标对象的对应属性。
+    /// </summary>
+    /// <param name="targetTypeSymbol">目标类型的符号信息，用于反射获取属性元数据。</param>
+    /// <param name="attributes">XML 属性集合，其值将被解析并赋值给目标属性。</param>
+    /// <param name="targetVariable">目标实例的变量名（如 "obj" 或 "this"），用于生成赋值语句。</param>
+    /// <param name="indentLevel">代码缩进级别（空格数），控制生成代码的格式化。</param>
+    /// <returns>生成的属性赋值代码（如 "obj.Property = value;"）。</returns>
+    /// <remarks>
+    /// 1. 仅处理可写属性（<see cref="IPropertySymbol.SetMethod"/> 不为 null）。
+    /// 2. 跳过 <see cref="SpecialAttributes"/> 中定义的保留属性（如 "Name"）。
+    /// 3. 使用 <see cref="ParseHelper.TryParseProperty"/> 解析属性值，确保类型安全。
+    /// 4. 生成的代码格式示例：<c>"    target.Property = parsedValue;"</c>。
+    /// </remarks>
+    private static string GeneratePropertyAssignments(INamedTypeSymbol targetTypeSymbol, IEnumerable<XAttribute> attributes, string targetVariable, int indentLevel)
+    {
+        var indent = new string(' ', indentLevel);
+        var code = new StringBuilder();
+
+        targetVariable ??= "this";
+
+        foreach (var attribute in attributes)
+        {
+            var propertyName = attribute.Name.LocalName;
+            if (SpecialAttributes.Contains(propertyName)) continue;
+
+            var memberSymbols = targetTypeSymbol.GetOnlyMembers(propertyName);
+            if (memberSymbols.Count == 0 ||
+                memberSymbols.First() is not IPropertySymbol propSymbol ||
+                propSymbol.SetMethod == null) continue;
+
+            if (ParseHelper.TryParseProperty(propSymbol, attribute.Value, out var rValue))
+            {
+                code.AppendLine($"{indent}{targetVariable}.{propertyName} = {rValue};");
+            }
+        }
+
+        return code.ToString();
     }
 }
