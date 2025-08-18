@@ -92,7 +92,7 @@ internal partial class ComponentGenerator : IIncrementalGenerator
             try
             {
                 ComponentGeneratorLogic.AliasToTypeSymbolMapping = mappingTable;
-                var code = ComponentGeneratorLogic.GenCode(doc.Root, typeSymbol);
+                var code = ComponentGeneratorLogic.GenerateComponentCode(doc.Root, typeSymbol);
 
                 spc.AddSource($"{typeSymbol.ToDisplayString()}.g.cs", SourceText.From(code, System.Text.Encoding.UTF8));
             }
