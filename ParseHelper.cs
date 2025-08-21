@@ -8,16 +8,8 @@ internal static class ParseHelper
     /// <summary>
     /// 将 " 替换为 \"，然后将 \" 替换为 \\"
     /// </summary>
-    /// <param name="input"></param>
-    /// <returns></returns>
-    public static string EscapeString(string input) => input?.Replace("\"", "\\\"").Replace("\\", "\\\\") ?? string.Empty;
-
-    public static void ParseClassFullName(string fullName, out string ns, out string className)
-    {
-        var fullNameSplit = fullName.Split('.');
-        ns = string.Join(".", fullNameSplit.Take(fullNameSplit.Length - 1).Select(s => s.Trim()));
-        className = fullNameSplit.Last().Trim();
-    }
+    public static string EscapeString(string input) =>
+        input?.Replace(@"""", @"\""").Replace(@"\", @"\\") ?? string.Empty;
 
     /// <summary>
     /// 通过属性符号和字符串值解析属性值。（右值）
@@ -27,7 +19,6 @@ internal static class ParseHelper
     /// <returns></returns>
     public static bool TryParseProperty(IPropertySymbol propSymbol, string value, out string rValue)
     {
-        var code = new StringBuilder();
         switch (propSymbol.Type.SpecialType)
         {
             case SpecialType.System_String:
@@ -41,7 +32,9 @@ internal static class ParseHelper
                 rValue = value.ToLowerInvariant();
                 return true;
             }
+
             #region 数字类型
+
             case SpecialType.System_Int16:
             {
                 if (short.TryParse(value, out var result))
@@ -49,6 +42,7 @@ internal static class ParseHelper
                     rValue = result.ToString();
                     return true;
                 }
+
                 break;
             }
             case SpecialType.System_Int32:
@@ -58,6 +52,7 @@ internal static class ParseHelper
                     rValue = result.ToString();
                     return true;
                 }
+
                 break;
             }
             case SpecialType.System_Double:
@@ -67,6 +62,7 @@ internal static class ParseHelper
                     rValue = $"{result}D";
                     return true;
                 }
+
                 break;
             }
             case SpecialType.System_Single:
@@ -76,9 +72,12 @@ internal static class ParseHelper
                     rValue = $"{result}F";
                     return true;
                 }
+
                 break;
             }
+
             #endregion
+
             case SpecialType.None:
             {
                 // 特殊类型为 None 时，可能是 enum 或自定义类型
@@ -96,6 +95,7 @@ internal static class ParseHelper
                 {
                     return TryParseTypeProperty(propTypeSymbol, value, out rValue);
                 }
+
                 break;
             }
         }
@@ -104,72 +104,75 @@ internal static class ParseHelper
         return false;
     }
 
-    public static bool TryParseTypeProperty(INamedTypeSymbol propTypeSymbol, string value, out string rValue)
+    public static bool TryParseTypeProperty(INamedTypeSymbol propTypeSymbol, string value, out string rightValue)
     {
-        rValue = string.Empty;
+        rightValue = string.Empty;
         var displayString = propTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
         switch (displayString)
         {
             case "global::Microsoft.Xna.Framework.Color":
             {
-                return ParseColor(propTypeSymbol, value, out rValue);
+                return ParseColor(propTypeSymbol, value, out rightValue);
             }
             case "global::Microsoft.Xna.Framework.Vector2":
             {
                 var parts = value.Split([' '], StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length == 1 && float.TryParse(parts[0], out var v1))
+                switch (parts.Length)
                 {
-                    rValue = $"new {displayString}({v1}F)";
-                    return true;
+                    case 1 when float.TryParse(parts[0], out var v1):
+                        rightValue = $"new {displayString}({v1}F)";
+                        return true;
+                    case 2 when float.TryParse(parts[0], out var v2) &&
+                                float.TryParse(parts[1], out var v3):
+                        rightValue = $"new {displayString}({v2}F, {v3}F)";
+                        return true;
+                    default: return false;
                 }
-                else if (parts.Length == 2 && float.TryParse(parts[0], out var v2) && float.TryParse(parts[1], out var v3))
-                {
-                    rValue = $"new {displayString}({v2}F, {v3}F)";
-                    return true;
-                }
-                return false;
             }
             case "global::Microsoft.Xna.Framework.Vector3":
             {
                 var parts = value.Split([' '], StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length == 1 && float.TryParse(parts[0], out var v1))
+                switch (parts.Length)
                 {
-                    rValue = $"new {displayString}({v1}F)";
-                    return true;
+                    case 1 when float.TryParse(parts[0], out var v1):
+                        rightValue = $"new {displayString}({v1}F)";
+                        return true;
+                    case 3 when float.TryParse(parts[0], out var v2) &&
+                                float.TryParse(parts[1], out var v3) && float.TryParse(parts[2], out var v4):
+                        rightValue = $"new {displayString}({v2}F, {v3}F, {v4}F)";
+                        return true;
+                    default: return false;
                 }
-                else if (parts.Length == 3 && float.TryParse(parts[0], out var v2) && float.TryParse(parts[1], out var v3) && float.TryParse(parts[2], out var v4))
-                {
-                    rValue = $"new {displayString}({v2}F, {v3}F, {v4}F)";
-                    return true;
-                }
-                return false;
             }
             case "global::Microsoft.Xna.Framework.Vector4":
             {
                 var parts = value.Split([' '], StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length == 1 && float.TryParse(parts[0], out var v1))
+                switch (parts.Length)
                 {
-                    rValue = $"new {displayString}({v1}F)";
-                    return true;
+                    case 1 when float.TryParse(parts[0], out var v1):
+                        rightValue = $"new {displayString}({v1}F)";
+                        return true;
+                    case 4 when float.TryParse(parts[0], out var v2) && float.TryParse(parts[1], out var v3) &&
+                                float.TryParse(parts[2], out var v4) && float.TryParse(parts[3], out var v5):
+                        rightValue = $"new {displayString}({v2}F, {v3}F, {v4}F, {v5}F)";
+                        return true;
+                    default:
+                        return false;
                 }
-                else if (parts.Length == 4 && float.TryParse(parts[0], out var v2) && float.TryParse(parts[1], out var v3) && float.TryParse(parts[2], out var v4) && float.TryParse(parts[3], out var v5))
-                {
-                    rValue = $"new {displayString}({v2}F, {v3}F, {v4}F, {v5}F)";
-                    return true;
-                }
-                return false;
             }
             default:
             {
                 if (propTypeSymbol.AllInterfaces.Any(i =>
-                    i.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == "global::System.IParsable<TSelf>" &&
-                    SymbolEqualityComparer.Default.Equals(i.TypeArguments[0], propTypeSymbol)))
+                        i.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) ==
+                        "global::System.IParsable<TSelf>" &&
+                        SymbolEqualityComparer.Default.Equals(i.TypeArguments[0], propTypeSymbol)))
                 {
                     var fullTypeName = propTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-                    rValue = $"{fullTypeName}.Parse(\"{EscapeString(value)}\", null)";
+                    rightValue = $"{fullTypeName}.Parse(\"{EscapeString(value)}\", null)";
                     return true;
                 }
+
                 break;
             }
         }
@@ -197,56 +200,54 @@ internal static class ParseHelper
             byte r = Convert.ToByte(hex.Substring(0, 2), 16);
             byte g = Convert.ToByte(hex.Substring(2, 2), 16);
             byte b = Convert.ToByte(hex.Substring(4, 2), 16);
+
             if (hex.Length == 6)
             {
                 output = $"new {name}({r}, {g}, {b})";
                 return true;
             }
-            else
-            {
-                byte a = Convert.ToByte(hex.Substring(6, 2), 16);
-                output = $"new {name}({r}, {g}, {b}) * {a / 255f}F";
-                return true;
-            }
+
+            byte a = Convert.ToByte(hex.Substring(6, 2), 16);
+            output = $"new {name}({r}, {g}, {b}) * {a / 255f}F";
+            return true;
         }
-        else if (value.StartsWith("rgb(", StringComparison.OrdinalIgnoreCase) &&
+
+        if (value.StartsWith("rgb(", StringComparison.OrdinalIgnoreCase) &&
             value.EndsWith(")", StringComparison.OrdinalIgnoreCase))
         {
             var parts = value.Substring(4, value.Length - 5)
-                             .Split([','], StringSplitOptions.RemoveEmptyEntries);
+                .Split([','], StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length != 3) return false;
 
-            if (byte.TryParse(parts[0], out var r) &&
-                byte.TryParse(parts[1], out var g) &&
-                byte.TryParse(parts[2], out var b))
-            {
-                output = $"new {name}({r}, {g}, {b})";
-                return true;
-            }
+            if (!byte.TryParse(parts[0], out var r) ||
+                !byte.TryParse(parts[1], out var g) ||
+                !byte.TryParse(parts[2], out var b)) return false;
+
+            output = $"new {name}({r}, {g}, {b})";
+            return true;
         }
-        else if (value.StartsWith("rgba(", StringComparison.OrdinalIgnoreCase) &&
+
+        if (value.StartsWith("rgba(", StringComparison.OrdinalIgnoreCase) &&
             value.EndsWith(")", StringComparison.OrdinalIgnoreCase))
         {
             var parts = value.Substring(5, value.Length - 6).Split([','], StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length != 4) return false;
 
-            if (byte.TryParse(parts[0], out var r) &&
-                byte.TryParse(parts[1], out var g) &&
-                byte.TryParse(parts[2], out var b) &&
-                float.TryParse(parts[3], out var a))
-            {
-                output = $"new {name}({r}, {g}, {b}) * {a}F";
-                return true;
-            }
+            if (!byte.TryParse(parts[0], out var r) ||
+                !byte.TryParse(parts[1], out var g) ||
+                !byte.TryParse(parts[2], out var b) ||
+                !float.TryParse(parts[3], out var a)) return false;
+
+            output = $"new {name}({r}, {g}, {b}) * {a}F";
+            return true;
         }
 
         return false;
     }
 
     /// <summary> 转换为有效字段名，保留数字字母和下划线 </summary>
-    public static bool IsValidMemberName(string input)
+    public static bool IsValidMemberName(string name)
     {
-        if (string.IsNullOrWhiteSpace(input)) return false;
-        return input.All(c => char.IsLetterOrDigit(c) || c.Equals('_'));
+        return !string.IsNullOrWhiteSpace(name) && name.All(c => char.IsLetterOrDigit(c) || c.Equals('_'));
     }
 }

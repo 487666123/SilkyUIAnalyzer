@@ -18,8 +18,8 @@ internal partial class ComponentGenerator : IIncrementalGenerator
         isEnabledByDefault: true,
         description: "标记不同类型的 XML 元素名不能重复.");
 
-    public static readonly string AttributeName = "SilkyUIFramework.Attributes.XmlElementMappingAttribute";
-    public static readonly string ElementGroupClassName = "SilkyUIFramework.UIElementGroup";
+    private const string AttributeName = "SilkyUIFramework.Attributes.XmlElementMappingAttribute";
+    private const string ElementGroupClassName = "SilkyUIFramework.UIElementGroup";
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -33,13 +33,14 @@ internal partial class ComponentGenerator : IIncrementalGenerator
             c.GlobalNamespace.ForEachTypeSymbol((typeSymbol) =>
             {
                 // 所有 别名(alias) and TypeSymbol
-                foreach (var attr in typeSymbol.GetAttributes())
+                foreach (var alias in from attr in typeSymbol.GetAttributes()
+                         where SymbolEqualityComparer.Default.Equals(attr.AttributeClass, targetAttributeSymbol)
+                         select attr.ConstructorArguments[0].Value as string
+                         into alias
+                         where !string.IsNullOrWhiteSpace(alias)
+                         select alias)
                 {
-                    if (SymbolEqualityComparer.Default.Equals(attr.AttributeClass, targetAttributeSymbol))
-                    {
-                        var alias = attr.ConstructorArguments[0].Value as string;
-                        if (!string.IsNullOrWhiteSpace(alias)) result.Add((alias, typeSymbol));
-                    }
+                    result.Add((alias, typeSymbol));
                 }
             });
 
@@ -53,17 +54,17 @@ internal partial class ComponentGenerator : IIncrementalGenerator
             {
                 try
                 {
-                    var document = XDocument.Parse(file.GetText()?.ToString());
-                    if (string.IsNullOrWhiteSpace(document.Root?.Attribute("Class")?.Value)) return null;
-                    return document;
+                    var document = XDocument.Parse(file.GetText()!.ToString());
+                    return string.IsNullOrWhiteSpace(document.Root?.Attribute("Class")?.Value) ? null : document;
                 }
                 catch { return null; }
             }).Where(doc => doc != null);
 
         // 所有类语法
         var classSyntaxProvider = context.SyntaxProvider.CreateSyntaxProvider(
-            predicate: static (syntaxNode, _) => syntaxNode is ClassDeclarationSyntax,
-            transform: static (context, _) => context.SemanticModel.GetDeclaredSymbol(context.Node) as INamedTypeSymbol)
+                predicate: static (syntaxNode, _) => syntaxNode is ClassDeclarationSyntax,
+                transform: static (context, _) =>
+                    context.SemanticModel.GetDeclaredSymbol(context.Node) as INamedTypeSymbol)
             .Where(symbol => symbol.InheritsFrom(ElementGroupClassName)).Collect();
 
         // 找到 XML 绑定的 Class 的 TypeSymbol, 并筛选掉类型映射失败的组
@@ -74,7 +75,8 @@ internal partial class ComponentGenerator : IIncrementalGenerator
                 var ((doc, groupTypeSymbols), mapping) = pair;
 
                 var className = doc.Root.Attribute("Class").Value;
-                var typeSymbol = groupTypeSymbols.FirstOrDefault(symbols => symbols.ToDisplayString().Equals(className));
+                var typeSymbol =
+                    groupTypeSymbols.FirstOrDefault(symbols => symbols.ToDisplayString().Equals(className));
 
                 return (doc, typeSymbol, mapping);
             }).Where((args) => args.typeSymbol != null);

@@ -1,7 +1,18 @@
-# SilkyUI Analyzer
+# SilkyUI 框架分析器
 
-SilkyUIFramework 项目分析与代码生成器\
+SilkyUI Framework 项目分析与代码生成器\
 可以将 UI 的 XML 结构描述转换为 C# 代码
+
+![预览](./code.png)
+
+## 特殊元素
+
+### Style 元素
+
+定义通用样式，`Style` 元素的 `Name` 属性为此样式的名称\
+遇到重复 Name 的以首个 `Style` 元素为准\
+使用 `Style` 时，将需要元素的 `Style` 属性设置为对应 `Style` 的 `Name` 即可\
+普通元素的 `Style` 属性可以填写多个 `Style`，多个 `Style` 之间用空格隔开
 
 ## 特殊属性
 

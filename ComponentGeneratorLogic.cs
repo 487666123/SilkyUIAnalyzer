@@ -1,6 +1,4 @@
-﻿using System.Collections.Generic;
-using System.Text;
-using System.Xml;
+﻿using System.Text;
 using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
 
@@ -9,14 +7,8 @@ namespace SilkyUIAnalyzer;
 internal static class ComponentGeneratorLogic
 {
     private static int _variableCounter;
-    private static HashSet<string> ValidMemberName = [];
+    private static HashSet<string> ValidMemberName { get; } = [];
     public static Dictionary<string, INamedTypeSymbol> AliasToTypeSymbolMapping { get; set; }
-
-    /// <summary> 特殊属性，不需要生成字段或赋值语句的属性名列表。 </summary>
-    public static HashSet<string> SpecialAttributes { get; } = ["Name", "Class", "Style"];
-
-    /// <summary> 特殊元素 </summary>
-    public static HashSet<string> SpecialElement { get; } = ["Style"];
 
     /// <summary>
     /// 从 XML 根元素生成目标类型的完整组件代码，包括属性声明、初始化逻辑和子元素处理。
@@ -47,28 +39,30 @@ internal static class ComponentGeneratorLogic
             ExtendedAttributes.Clear();
             CollectExtendedAttributes(root);
 
-            var code = new StringBuilder().AppendLine($$"""
-            namespace {{typeSymbol.ContainingNamespace.ToDisplayString()}}
-            {
-                {{typeSymbol.DeclaredAccessibility.ToString().ToLowerInvariant()}} partial class {{typeSymbol.Name}}
-                {
-            {{GeneratePropertyDeclarationsRecursively(root, 8)}}
+            var code = new StringBuilder().AppendLine(
+                $$"""
+                  namespace {{typeSymbol.ContainingNamespace.ToDisplayString()}}
+                  {
+                      {{typeSymbol.DeclaredAccessibility.ToString().ToLowerInvariant()}} partial class {{typeSymbol.Name}}
+                      {
+                  {{GeneratePropertyDeclarationsRecursively(root, 8)}}
 
-                    private bool _contentLoaded;
+                          private bool _contentLoaded;
 
-                    private void InitializeComponent()
-                    {
-                        if (_contentLoaded) return;
-                        _contentLoaded = true;
+                          private void InitializeComponent()
+                          {
+                              if (_contentLoaded) return;
+                              _contentLoaded = true;
 
-            {{GenerateElementInitialization(typeSymbol, root, null, 12)}}
-            """);
+                  {{GenerateElementInitialization(typeSymbol, root, "this", 12)}}
+                  """);
 
-            return code.AppendLine($$"""
-                    }
-                }
-            }
-            """).ToString();
+            return code.AppendLine(
+                $$"""
+                          }
+                      }
+                  }
+                  """).ToString();
         }
         catch { return string.Empty; }
     }
@@ -90,9 +84,10 @@ internal static class ComponentGeneratorLogic
         var indent = new string(' ', indentLevel);
         var code = new StringBuilder();
 
-        foreach (var child in element.Elements().Where(e => !SpecialElement.Contains(e.Name.LocalName)))
+        foreach (var child in element.Elements().Where(e => e.IsCommonElement()))
         {
-            if (child.Attribute("Name") is { } nameAttr && ParseHelper.IsValidMemberName(nameAttr.Value) && ValidMemberName.Add(nameAttr.Value))
+            if (child.Attribute("Name") is { } nameAttr && ParseHelper.IsValidMemberName(nameAttr.Value) &&
+                ValidMemberName.Add(nameAttr.Value))
             {
                 var typeSymbol = AliasToTypeSymbolMapping[child.Name.LocalName];
                 var typeName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
@@ -113,6 +108,7 @@ internal static class ComponentGeneratorLogic
     /// </summary>
     /// <param name="typeSymbol">目标类型的符号信息，用于创建实例。</param>
     /// <param name="element">XML 元素，其结构和属性将用于初始化对象。</param>
+    /// <param name="variableName"></param>
     /// <param name="indentLevel">代码缩进级别（空格数），控制生成代码的格式化。</param>
     /// <returns>
     /// 包含生成的初始化代码和实例变量名的元组，格式示例：
@@ -130,37 +126,35 @@ internal static class ComponentGeneratorLogic
     /// 4. 若子元素有 "Name" 属性且名称有效（<see cref="ValidMemberName"/>），则额外生成属性赋值代码。<br/>
     /// 5. 默认调用 `Add` 方法将子元素添加到父实例（适用于集合类）。
     /// </remarks>
-    private static string GenerateElementInitialization(INamedTypeSymbol typeSymbol, XElement element, string variableName, int indentLevel)
+    private static string GenerateElementInitialization(INamedTypeSymbol typeSymbol, XElement element,
+        string variableName, int indentLevel)
     {
         var indent = new string(' ', indentLevel);
         var code = new StringBuilder();
 
-        if (variableName != null && !variableName.Equals("this"))
-        {
-            code.AppendLine($"{indent}var {variableName} = new global::{typeSymbol}();");
-        }
-        else variableName = "this";
+        variableName ??= "this";
 
         // 属性赋值
         code.Append(GeneratePropertyAssignments(typeSymbol, element, variableName, indentLevel));
 
-        if (element.HasElements)
+        if (!element.HasElements) return code.ToString();
+
+        foreach (var item in element.Elements().Where(e => e.IsCommonElement()))
         {
-            foreach (var item in element.Elements()
-                .Where(e => !SpecialElement.Contains(e.Name.LocalName)))
+            if (!AliasToTypeSymbolMapping.TryGetValue(item.Name.LocalName, out var itemTypeSymbol)) continue;
+
+            var itemVariableName = $"element{++_variableCounter}";
+
+            code.AppendLine($"{indent}var {itemVariableName} = new {itemTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}();");
+            code.Append(GenerateElementInitialization(itemTypeSymbol, item, itemVariableName, indentLevel));
+
+            // 如果子元素有 Name 属性且名称有效，则生成属性赋值代码 (将对象映射到属性)
+            if (item.Attribute("Name") is { } nameAttr && ValidMemberName.Contains(nameAttr.Value))
             {
-                if (!AliasToTypeSymbolMapping.TryGetValue(item.Name.LocalName, out var itemTypeSymbol)) continue;
-
-                var childVariableName = $"element{++_variableCounter}";
-                var childCode = GenerateElementInitialization(itemTypeSymbol, item, childVariableName, indentLevel);
-                code.Append(childCode);
-
-                if (item.Attribute("Name") is { } nameAttr && ValidMemberName.Contains(nameAttr.Value))
-                {
-                    code.AppendLine($"{indent}{nameAttr.Value} = {childVariableName};");
-                }
-                code.AppendLine($"{indent}{variableName}.Add({childVariableName});");
+                code.AppendLine($"{indent}{nameAttr.Value} = {itemVariableName};");
             }
+
+            code.AppendLine($"{indent}{variableName}.Add({itemVariableName});");
         }
 
         return code.ToString();
@@ -169,9 +163,9 @@ internal static class ComponentGeneratorLogic
     /// <summary>
     /// 生成属性赋值代码，将 XML 属性值赋给目标对象的对应属性。
     /// </summary>
-    /// <param name="targetTypeSymbol">目标类型的符号信息，用于反射获取属性元数据。</param>
+    /// <param name="typeSymbol">目标类型的符号信息，用于反射获取属性元数据。</param>
     /// <param name="kvs">XML 属性集合，其值将被解析并赋值给目标属性。</param>
-    /// <param name="targetVariable">目标实例的变量名（如 "obj" 或 "this"），用于生成赋值语句。</param>
+    /// <param name="variableName">目标实例的变量名（如 "obj" 或 "this"），用于生成赋值语句。</param>
     /// <param name="indentLevel">代码缩进级别（空格数），控制生成代码的格式化。</param>
     /// <returns>生成的属性赋值代码（如 "obj.Property = value;"）。</returns>
     /// <remarks>
@@ -180,36 +174,41 @@ internal static class ComponentGeneratorLogic
     /// 3. 使用 <see cref="ParseHelper.TryParseProperty"/> 解析属性值，确保类型安全。
     /// 4. 生成的代码格式示例：<c>"    target.Property = parsedValue;"</c>。
     /// </remarks>
-    private static string GeneratePropertyAssignments(INamedTypeSymbol targetTypeSymbol, XElement element, string targetVariable, int indentLevel)
+    private static string GeneratePropertyAssignments(INamedTypeSymbol typeSymbol, XElement element,
+        string variableName, int indentLevel)
     {
         var indent = new string(' ', indentLevel);
         var code = new StringBuilder();
 
-        targetVariable ??= "this";
+        variableName ??= "this";
 
-        var attributes = element.Attributes();
-        var styleAttr = attributes.FirstOrDefault(attr => attr.Name.LocalName.Equals("Style"));
-        if (styleAttr != null)
+        // 想了半天，你就写了这点代码？！
+        foreach (var item in element.Elements().Where(e => e.Name.LocalName.StartsWith("M.")))
         {
-            if (!string.IsNullOrWhiteSpace(styleAttr.Value))
-            {
-                var parts = styleAttr.Value.Split(' ');
-                attributes = attributes.Concat(GetExtendedAttributes(parts));
-            }
+            var memberName = item.Name.LocalName.Substring(2);
+            if (string.IsNullOrWhiteSpace(memberName)) continue;
+            if (typeSymbol.GetFirstMembers(memberName) is not IPropertySymbol propSymbol) continue;
+            if (propSymbol.Type is not INamedTypeSymbol pts) continue;
+            code.Append(GenerateElementInitialization(pts, item, $"{variableName}.{memberName}", indentLevel));
         }
 
-        foreach (var (propertyName, value) in attributes
-            .Where(a => !SpecialAttributes.Contains(a.Name.LocalName))
-            .Select(a => (a.Name.LocalName, a.Value)))
+        // 附加属性
+        var attributes = element.Attributes();
+        var styleAttr = attributes.FirstOrDefault(attr => attr.Name.LocalName.Equals("Style"));
+        if (!string.IsNullOrWhiteSpace(styleAttr?.Value))
         {
-            var memberSymbols = targetTypeSymbol.GetOnlyMembers(propertyName);
-            if (memberSymbols.Count == 0 ||
-                memberSymbols.First() is not IPropertySymbol propSymbol ||
-                propSymbol.SetMethod == null) continue;
+            var parts = styleAttr.Value.Split([' '], StringSplitOptions.RemoveEmptyEntries);
+            attributes = attributes.Concat(GetExtendedAttributes(parts));
+        }
+
+        foreach (var (propertyName, value) in attributes.Where(a => a.IsCommonAttribute())
+                     .Select(a => (a.Name.LocalName, a.Value)))
+        {
+            if (typeSymbol.GetFirstMembers(propertyName) is not IPropertySymbol propSymbol || propSymbol.SetMethod == null) continue;
 
             if (ParseHelper.TryParseProperty(propSymbol, value, out var rValue))
             {
-                code.AppendLine($"{indent}{targetVariable}.{propertyName} = {rValue};");
+                code.AppendLine($"{indent}{variableName}.{propertyName} = {rValue};");
             }
         }
 
@@ -227,7 +226,7 @@ internal static class ComponentGeneratorLogic
     /// <param name="element">要处理的 XML 元素。</param>
     private static void CollectExtendedAttributes(XElement element)
     {
-        if (element.Name.LocalName.Equals("Style"))
+        if (EqualityComparer<string>.Default.Equals(element.Name.LocalName, "Style"))
         {
             if (element.Attribute("Name")?.Value is { } value &&
                 !string.IsNullOrWhiteSpace(value) && !ExtendedAttributes.ContainsKey(value))
@@ -256,4 +255,5 @@ internal static class ComponentGeneratorLogic
             .Where(ExtendedAttributes.ContainsKey)
             .SelectMany(item => ExtendedAttributes[item]);
     }
+
 }
