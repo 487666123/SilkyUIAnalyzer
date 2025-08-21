@@ -217,6 +217,14 @@ internal static class ComponentGeneratorLogic
 
     public static Dictionary<string, IEnumerable<XAttribute>> ExtendedAttributes = [];
 
+    private static void RegisterStyleElement(string styleName, XElement element)
+    {
+        if (!string.IsNullOrWhiteSpace(styleName) && !ExtendedAttributes.ContainsKey(styleName))
+        {
+            ExtendedAttributes[styleName] = element.Attributes().Where(attr => !attr.Name.LocalName.Equals("Name"));
+        }
+    }
+
     /// <summary>
     /// 遍历指定的 <see cref="XElement"/> 及其子元素，
     /// 当遇到 <c>Style</c> 元素时，
@@ -226,19 +234,29 @@ internal static class ComponentGeneratorLogic
     /// <param name="element">要处理的 XML 元素。</param>
     private static void CollectExtendedAttributes(XElement element)
     {
-        if (EqualityComparer<string>.Default.Equals(element.Name.LocalName, "Style"))
+        var elementName = element.Name.LocalName;
+        if (string.IsNullOrWhiteSpace(elementName)) return;
+
+        if (elementName.StartsWith("Style."))
         {
-            if (element.Attribute("Name")?.Value is { } value &&
-                !string.IsNullOrWhiteSpace(value) && !ExtendedAttributes.ContainsKey(value))
+            var styleName = elementName.Substring(6);
+            RegisterStyleElement(styleName, element);
+            return;
+        }
+        else if (elementName.Equals("Style"))
+        {
+            var styleName = element.Attribute("Name")?.Value;
+            RegisterStyleElement(styleName, element);
+
+            foreach (var item in element.Elements())
             {
-                // 去除 Name 属性
-                ExtendedAttributes[value] = element.Attributes().Where(attr => !attr.Name.LocalName.Equals("Name"));
+                RegisterStyleElement(item.Name.LocalName, item);
             }
+            return;
         }
-        else
-        {
-            foreach (var item in element.Elements()) CollectExtendedAttributes(item);
-        }
+
+
+        foreach (var item in element.Elements()) CollectExtendedAttributes(item);
     }
 
     /// <summary>

@@ -7,6 +7,7 @@ internal static class XmlExtensions
 {
     private static HashSet<string> SpecialAttributes { get; } = ["Name", "Class", "Style"];
     private static HashSet<string> SpecialElement { get; } = ["Style"];
+    private static HashSet<string> SpecialElementHeader { get; } = ["Style", "M"];
 
     public static bool IsCommonAttribute(this XAttribute attribute) => !SpecialAttributes.Contains(attribute.Name.LocalName);
 
@@ -17,8 +18,8 @@ internal static class XmlExtensions
     {
         var localName = element.Name.LocalName;
 
-        if (localName.StartsWith("M.") ||
-         SpecialElement.Contains(localName)) return false;
+        if (SpecialElementHeader.Any(header => localName.StartsWith($"{header}."))) return false;
+        if (SpecialElement.Contains(localName)) return false;
 
         return true;
     }
