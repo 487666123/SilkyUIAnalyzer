@@ -198,7 +198,7 @@ internal static class ComponentGeneratorLogic
         if (!string.IsNullOrWhiteSpace(styleAttr?.Value))
         {
             var parts = styleAttr.Value.Split([' '], StringSplitOptions.RemoveEmptyEntries);
-            attributes = attributes.Concat(GetExtendedAttributes(parts));
+            attributes = GetExtendedAttributes(parts).Concat(attributes);
         }
 
         foreach (var (propertyName, value) in attributes.Where(a => a.IsCommonAttribute())
