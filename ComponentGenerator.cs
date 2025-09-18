@@ -19,7 +19,7 @@ internal partial class ComponentGenerator : IIncrementalGenerator
         description: "标记不同类型的 XML 元素名不能重复.");
 
     private const string AttributeName = "SilkyUIFramework.Attributes.XmlElementMappingAttribute";
-    private const string ElementGroupClassName = "SilkyUIFramework.UIElementGroup";
+    private const string ElementGroupClassName = "SilkyUIFramework.Elements.UIElementGroup";
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -34,11 +34,11 @@ internal partial class ComponentGenerator : IIncrementalGenerator
             {
                 // 所有 别名(alias) and TypeSymbol
                 foreach (var alias in from attr in typeSymbol.GetAttributes()
-                         where SymbolEqualityComparer.Default.Equals(attr.AttributeClass, targetAttributeSymbol)
-                         select attr.ConstructorArguments[0].Value as string
+                                      where SymbolEqualityComparer.Default.Equals(attr.AttributeClass, targetAttributeSymbol)
+                                      select attr.ConstructorArguments[0].Value as string
                          into alias
-                         where !string.IsNullOrWhiteSpace(alias)
-                         select alias)
+                                      where !string.IsNullOrWhiteSpace(alias)
+                                      select alias)
                 {
                     result.Add((alias, typeSymbol));
                 }

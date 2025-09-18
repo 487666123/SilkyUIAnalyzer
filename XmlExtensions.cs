@@ -1,5 +1,4 @@
-﻿using System.Net.Security;
-using System.Xml.Linq;
+﻿using System.Xml.Linq;
 
 namespace SilkyUIAnalyzer;
 
