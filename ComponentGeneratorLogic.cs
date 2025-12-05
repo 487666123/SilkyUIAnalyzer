@@ -154,7 +154,7 @@ internal static class ComponentGeneratorLogic
                 code.AppendLine($"{indent}{nameAttr.Value} = {itemVariableName};");
             }
 
-            code.AppendLine($"{indent}{variableName}.Add({itemVariableName});");
+            code.AppendLine($"{indent}{variableName}.AddChild({itemVariableName});");
         }
 
         return code.ToString();
