@@ -9,14 +9,14 @@ namespace SilkyUIAnalyzer;
 [Generator]
 internal partial class ComponentGenerator : IIncrementalGenerator
 {
-    private static readonly DiagnosticDescriptor DuplicateElementNameRule = new(
-        id: "XMLMAP 001",
-        title: "重复的 XML 元素名映射",
-        messageFormat: "XML 元素名 '{0}' 被多个类型使用，请确保唯一。",
-        category: "XmlMappingGenerator",
-        DiagnosticSeverity.Error,
-        isEnabledByDefault: true,
-        description: "标记不同类型的 XML 元素名不能重复.");
+    //private static readonly DiagnosticDescriptor DuplicateElementNameRule = new(
+    //    id: "XMLMAP 001",
+    //    title: "重复的 XML 元素名映射",
+    //    messageFormat: "XML 元素名 '{0}' 被多个类型使用，请确保唯一。",
+    //    category: "XmlMappingGenerator",
+    //    DiagnosticSeverity.Error,
+    //    isEnabledByDefault: true,
+    //    description: "标记不同类型的 XML 元素名不能重复.");
 
     private const string AttributeName = "SilkyUIFramework.Attributes.XmlElementMappingAttribute";
     private const string ElementGroupClassName = "SilkyUIFramework.Elements.UIElementGroup";
