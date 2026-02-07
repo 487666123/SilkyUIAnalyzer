@@ -2,7 +2,7 @@
 
 namespace SilkyUIAnalyzer;
 
-internal static class SymbolExtensions
+internal static class ITypeSymbolExtensions
 {
     extension(INamedTypeSymbol typeSymbol)
     {
@@ -43,22 +43,25 @@ internal static class SymbolExtensions
         }
     }
 
-    /// <summary>
-    /// 遍历命名空间下的所有 TypeSymbol
-    /// </summary>
-    public static void ForEachTypeSymbol(this INamespaceSymbol ns, Action<INamedTypeSymbol> action)
+    extension(INamespaceSymbol namespaceSymbol)
     {
-        if (action == null) return;
-
-        foreach (var member in ns.GetMembers())
+        /// <summary>
+        /// 遍历命名空间下的所有 TypeSymbol
+        /// </summary>
+        public void ForEachTypeSymbol(Action<INamedTypeSymbol> action)
         {
-            if (member is INamespaceSymbol childNS)
+            if (action == null) return;
+
+            foreach (var member in namespaceSymbol.GetMembers())
             {
-                ForEachTypeSymbol(childNS, action);
-            }
-            else if (member is INamedTypeSymbol typeSymbol)
-            {
-                action(typeSymbol);
+                if (member is INamespaceSymbol childNS)
+                {
+                    ForEachTypeSymbol(childNS, action);
+                }
+                else if (member is INamedTypeSymbol typeSymbol)
+                {
+                    action(typeSymbol);
+                }
             }
         }
     }

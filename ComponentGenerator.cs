@@ -28,34 +28,28 @@ internal partial class ComponentGenerator : IIncrementalGenerator
         var allSymbol = context.CompilationProvider.Select((compilation, _) =>
         {
             // 获取特性的 TypeSymbol
-            if (compilation.GetTypeByMetadataName(AttributeName) is not { } targetAttributeSymbol)
-                return ImmutableDictionary<string, INamedTypeSymbol>.Empty;
+            if (compilation.GetTypeByMetadataName(AttributeName) is not { } targetAttributeSymbol) return null;
 
-            var pairs = new List<(string Alias, INamedTypeSymbol TypeSymbol)>();
+            var map = new Dictionary<string, INamedTypeSymbol>();
 
-            compilation.GlobalNamespace.ForEachTypeSymbol((typeSymbol) =>
+            try
             {
-                // 收集该类型的所有别名
-                foreach (var alias in typeSymbol.GetAttributes()
-                                      .Where(attr => SymbolEqualityComparer.Default.Equals(attr.AttributeClass, targetAttributeSymbol))
-                                      .Select(attr => attr.ConstructorArguments[0].Value as string)
-                                      .Where(alias => !string.IsNullOrWhiteSpace(alias)))
+                compilation.GlobalNamespace.ForEachTypeSymbol((typeSymbol) =>
                 {
-                    pairs.Add((alias, typeSymbol));
-                }
-            });
+                    var aliases = typeSymbol.GetAttributes()
+                                          .Where(attr => SymbolEqualityComparer.Default.Equals(attr.AttributeClass, targetAttributeSymbol))
+                                          .Select(attr => attr.ConstructorArguments[0].Value as string)
+                                          .Where(alias => !string.IsNullOrWhiteSpace(alias));
+                    // 收集该类型的所有别名
+                    foreach (var alias in aliases)
+                    {
+                        map.Add(alias, typeSymbol);
+                    }
+                });
+            }
+            catch { return null; }
 
-            if (pairs.Count == 0) return ImmutableDictionary<string, INamedTypeSymbol>.Empty;
-
-            // 检查是否有重复别名（不同类型使用相同别名）
-            // 注：相同类型多次注册相同别名是允许的
-            var hasConflict = pairs
-                .GroupBy(p => p.Alias)
-                .Any(g => g.Select(p => p.TypeSymbol).Distinct(SymbolEqualityComparer.Default).Count() > 1);
-
-            if (hasConflict) return null;
-
-            return pairs.GroupBy(p => p.Alias).ToImmutableDictionary(g => g.Key, g => g.First().TypeSymbol);
+            return map.ToImmutableDictionary();
         });
 
         // 筛选 .xml 后缀的文件, 并转换为 document
