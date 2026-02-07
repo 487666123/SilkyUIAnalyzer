@@ -1,4 +1,5 @@
-﻿using System.Collections.Immutable;
+using System.Collections.Immutable;
+using System.Xml;
 using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -23,28 +24,38 @@ internal partial class ComponentGenerator : IIncrementalGenerator
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        var allSymbol = context.CompilationProvider.Select((c, _) =>
+        // 获取别名映射字典，返回null表示有重复别名冲突
+        var allSymbol = context.CompilationProvider.Select((compilation, _) =>
         {
             // 获取特性的 TypeSymbol
-            if (c.GetTypeByMetadataName(AttributeName) is not { } targetAttributeSymbol) return [];
+            if (compilation.GetTypeByMetadataName(AttributeName) is not { } targetAttributeSymbol)
+                return ImmutableDictionary<string, INamedTypeSymbol>.Empty;
 
-            var result = ImmutableArray.CreateBuilder<(string Alias, INamedTypeSymbol TypeSymbol)>();
+            var pairs = new List<(string Alias, INamedTypeSymbol TypeSymbol)>();
 
-            c.GlobalNamespace.ForEachTypeSymbol((typeSymbol) =>
+            compilation.GlobalNamespace.ForEachTypeSymbol((typeSymbol) =>
             {
-                // 所有 别名(alias) and TypeSymbol
-                foreach (var alias in from attr in typeSymbol.GetAttributes()
-                                      where SymbolEqualityComparer.Default.Equals(attr.AttributeClass, targetAttributeSymbol)
-                                      select attr.ConstructorArguments[0].Value as string
-                         into alias
-                                      where !string.IsNullOrWhiteSpace(alias)
-                                      select alias)
+                // 收集该类型的所有别名
+                foreach (var alias in typeSymbol.GetAttributes()
+                                      .Where(attr => SymbolEqualityComparer.Default.Equals(attr.AttributeClass, targetAttributeSymbol))
+                                      .Select(attr => attr.ConstructorArguments[0].Value as string)
+                                      .Where(alias => !string.IsNullOrWhiteSpace(alias)))
                 {
-                    result.Add((alias, typeSymbol));
+                    pairs.Add((alias, typeSymbol));
                 }
             });
 
-            return result.ToImmutable();
+            if (pairs.Count == 0) return ImmutableDictionary<string, INamedTypeSymbol>.Empty;
+
+            // 检查是否有重复别名（不同类型使用相同别名）
+            // 注：相同类型多次注册相同别名是允许的
+            var hasConflict = pairs
+                .GroupBy(p => p.Alias)
+                .Any(g => g.Select(p => p.TypeSymbol).Distinct(SymbolEqualityComparer.Default).Count() > 1);
+
+            if (hasConflict) return null;
+
+            return pairs.GroupBy(p => p.Alias).ToImmutableDictionary(g => g.Key, g => g.First().TypeSymbol);
         });
 
         // 筛选 .xml 后缀的文件, 并转换为 document
@@ -54,8 +65,20 @@ internal partial class ComponentGenerator : IIncrementalGenerator
             {
                 try
                 {
-                    var document = XDocument.Parse(file.GetText()!.ToString());
-                    return string.IsNullOrWhiteSpace(document.Root?.Attribute("Class")?.Value) ? null : document;
+                    var str = file.GetText()!.ToString();
+                    //[?] Xml 必有开头哪一行，所以可以设置一个 Length 最小检测
+                    if (string.IsNullOrWhiteSpace(str)) return null;
+
+                    // 检查 Class 属性
+                    using var reader = XmlReader.Create(new StringReader(str));
+                    reader.MoveToContent();
+                    if (reader.NodeType != XmlNodeType.Element) return null;
+
+                    // 检查 Class 属性
+                    var classValue = reader.GetAttribute("Class");
+                    if (string.IsNullOrWhiteSpace(classValue)) return null;
+
+                    return XDocument.Parse(str);
                 }
                 catch { return null; }
             }).Where(doc => doc != null);
@@ -72,13 +95,13 @@ internal partial class ComponentGenerator : IIncrementalGenerator
             .Combine(classSyntaxProvider).Combine(allSymbol)
             .Select((pair, _) =>
             {
-                var ((doc, groupTypeSymbols), mapping) = pair;
+                var ((doc, groupTypeSymbols), mappings) = pair;
 
                 var className = doc.Root.Attribute("Class").Value;
                 var typeSymbol =
                     groupTypeSymbols.FirstOrDefault(symbols => symbols.ToDisplayString().Equals(className));
 
-                return (doc, typeSymbol, mapping);
+                return (doc, typeSymbol, mappings);
             }).Where((args) => args.typeSymbol != null);
 
         // 注册源输出
@@ -86,15 +109,13 @@ internal partial class ComponentGenerator : IIncrementalGenerator
         {
             var (doc, typeSymbol, mappings) = data;
 
-            var duplicates = mappings.GroupBy(x => x.Alias).Where(g => g.Count() > 1).ToArray();
-            if (duplicates.Length > 0) return;
-
-            var mappingTable = mappings.ToDictionary(a => a.Alias, b => b.TypeSymbol);
+            // 如果有重复别名冲突，mappings为null，跳过生成
+            if (mappings == null) return;
 
             try
             {
-                ComponentGeneratorLogic.AliasToTypeSymbolMapping = mappingTable;
-                var code = ComponentGeneratorLogic.GenerateComponentCode(doc.Root, typeSymbol);
+                var logic = new ComponentGeneratorLogic(mappings);
+                var code = logic.GenerateComponentCode(doc.Root, typeSymbol);
 
                 spc.AddSource($"{typeSymbol.ToDisplayString()}.g.cs", SourceText.From(code, System.Text.Encoding.UTF8));
             }
