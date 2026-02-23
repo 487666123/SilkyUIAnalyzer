@@ -77,6 +77,9 @@ internal partial class ComponentGenerator : IIncrementalGenerator
                     reader.MoveToContent();
                     if (reader.NodeType != XmlNodeType.Element) return null;
 
+                    // 检查根元素名字
+                    if (!string.Equals("Body", reader.Name)) return null;
+
                     // 检查 Class 属性
                     var className = reader.GetAttribute("Class");
                     if (string.IsNullOrWhiteSpace(className)) return null;
