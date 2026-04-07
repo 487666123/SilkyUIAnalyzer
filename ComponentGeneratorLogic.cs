@@ -135,12 +135,36 @@ internal class ComponentGeneratorLogic(ImmutableDictionary<string, INamedTypeSym
             attributes = GetExtendedAttributes(parts).Concat(attributes);
         }
 
-        foreach (var (propertyName, value) in attributes.Where(a => a.IsCommonAttribute())
-                     .Select(a => (a.Name.LocalName, a.Value)))
+        var commonAttributes = attributes.Where(a => a.IsCommonAttribute()).ToArray();
+        var bindingTargetPropertyNames = new HashSet<string>(StringComparer.Ordinal);
+
+        // 先记录所有 Bind.* 的目标属性，后续遇到同名静态赋值时直接跳过。
+        foreach (var attribute in commonAttributes)
         {
+            if (attribute.TryGetBindingTargetPropertyName(out var propertyName))
+            {
+                bindingTargetPropertyNames.Add(propertyName);
+            }
+        }
+
+        foreach (var attribute in commonAttributes)
+        {
+            if (attribute.TryGetBindingTargetPropertyName(out var bindingTargetPropertyName))
+            {
+                if (typeSymbol.GetFirstMembers(bindingTargetPropertyName) is not IPropertySymbol bindingPropSymbol ||
+                    bindingPropSymbol.SetMethod == null) continue;
+
+                // Bind.Text="Title" -> view.Bind("Title", "Text")
+                code.AppendLine(
+                    $"{indent}{variableName}.Bind(\"{ParseHelper.EscapeString(attribute.Value)}\", \"{bindingTargetPropertyName}\");");
+                continue;
+            }
+
+            var propertyName = attribute.Name.LocalName;
+            if (bindingTargetPropertyNames.Contains(propertyName)) continue;
             if (typeSymbol.GetFirstMembers(propertyName) is not IPropertySymbol propSymbol || propSymbol.SetMethod == null) continue;
 
-            if (ParseHelper.TryParseProperty(propSymbol, value, out var rValue))
+            if (ParseHelper.TryParseProperty(propSymbol, attribute.Value, out var rValue))
             {
                 code.AppendLine($"{indent}{variableName}.{propertyName} = {rValue};");
             }
