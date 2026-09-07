@@ -2,18 +2,26 @@
 
 ## 新语法
 
-本次新增的数据绑定 XML 语法为：
+绑定命名空间 URI 约定为 `https://github.com/487666123/SilkyUIFramework/Binding`。示例需要先声明：
 
 ```xml
-Bind.PropertyName="SourcePropertyName"
+<Body xmlns:bind="https://github.com/487666123/SilkyUIFramework/Binding">
+    <TextView bind:Text="Title" />
+</Body>
+```
+
+绑定属性本身为：
+
+```xml
+bind:PropertyName="SourcePropertyName"
 ```
 
 例如：
 
 ```xml
-<TextView Bind.Text="Title" />
-<View Bind.Visible="IsVisible" />
-<Slider Bind.Value="Progress" />
+<TextView bind:Text="Title" />
+<View bind:Visible="IsVisible" />
+<Slider bind:Value="Progress" />
 ```
 
 含义分别是：
@@ -28,7 +36,7 @@ Bind.PropertyName="SourcePropertyName"
 
 1. 不会和普通字符串值冲突
 2. 生成器更容易识别
-3. 与现有 `M.` 这种特殊前缀风格一致
+3. 使用 XML 原生命名空间，便于 VSIX 按 URI 识别和补全
 
 例如：
 
@@ -41,7 +49,7 @@ Bind.PropertyName="SourcePropertyName"
 而：
 
 ```xml
-<TextView Bind.Text="Title" />
+<TextView bind:Text="Title" />
 ```
 
 不会有这个问题。
@@ -59,13 +67,13 @@ Bind.PropertyName="SourcePropertyName"
 
 判断规则很简单：
 
-- 属性名以 `Bind.` 开头
-- `Bind.` 后面必须还有目标属性名
+- 属性绑定到 Binding URI：`https://github.com/487666123/SilkyUIFramework/Binding`
+- XML 前缀可以替换，`bind:` 后面必须还有目标属性名
 
 例如：
 
-- `Bind.Text` -> 目标属性 `Text`
-- `Bind.Width` -> 目标属性 `Width`
+- `bind:Text` -> 目标属性 `Text`
+- `bind:Width` -> 目标属性 `Width`
 
 ### `ComponentGeneratorLogic.cs`
 
@@ -74,7 +82,7 @@ Bind.PropertyName="SourcePropertyName"
 在 `GeneratePropertyAssignments(...)` 中，属性处理流程变成了：
 
 1. 先拿到元素的所有普通属性和样式扩展属性
-2. 扫描一遍，收集所有 `Bind.*` 的目标属性名
+2. 扫描一遍，收集所有 `bind:*` 的目标属性名
 3. 再扫描一遍，分别处理绑定属性和普通属性
 
 ## 代码生成规则
@@ -98,7 +106,7 @@ element.Text = "Hello";
 例如：
 
 ```xml
-<TextView Bind.Text="Title" />
+<TextView bind:Text="Title" />
 ```
 
 生成：
@@ -125,7 +133,7 @@ UIView.Bind(string sourcePropName, string targetPropName)
 例如：
 
 ```xml
-<TextView Text="Hello" Bind.Text="Title" />
+<TextView Text="Hello" bind:Text="Title" />
 ```
 
 最终只会生成：
@@ -148,7 +156,7 @@ element.Text = "Hello";
 
 也就是说：
 
-- 如果 `Bind.Text` 对应的目标属性不存在，当前逻辑会直接跳过
+- 如果 `bind:Text` 对应的目标属性不存在，当前逻辑会直接跳过
 - 如果源属性名写错，编译期不会报错，实际行为取决于运行时绑定逻辑
 - 如果同时写了普通属性和绑定属性，当前直接忽略普通属性
 
@@ -159,7 +167,7 @@ element.Text = "Hello";
 支持的最小能力已经具备：
 
 ```xml
-<TextView Bind.Text="Title" />
+<TextView bind:Text="Title" />
 ```
 
 生成：
@@ -168,4 +176,4 @@ element.Text = "Hello";
 element.Bind("Title", "Text");
 ```
 
-并且能够与原有普通属性赋值流程共存，不会影响没有使用 `Bind.*` 的 XML。 
+并且能够与原有普通属性赋值流程共存，不会影响没有使用 `bind:*` 的 XML。

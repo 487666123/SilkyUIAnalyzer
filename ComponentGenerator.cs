@@ -17,12 +17,12 @@ internal partial class ComponentGenerator : IIncrementalGenerator
     /// <summary>
     /// Xml 映射 [CLR 元数据名称]
     /// </summary>
-    private const string XmlMappingName = "SilkyUIFramework.Attributes.XmlElementMappingAttribute";
+    private const string XmlMappingName = $"{AssemblyName}.Attributes.XmlElementMappingAttribute";
 
     /// <summary>
     /// UI 元素组 [CLR 元数据名称]
     /// </summary>
-    private const string UIElementGroupName = "SilkyUIFramework.Elements.UIElementGroup";
+    private const string UIElementGroupName = $"{AssemblyName}.Elements.UIElementGroup";
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -60,10 +60,10 @@ internal partial class ComponentGenerator : IIncrementalGenerator
             return map.ToImmutableDictionary();
         });
 
-        // 筛选 .xml 后缀的文件
+        // 筛选 .sui.xml 后缀的文件
         // 转换为 Xml Document
         var xmlProvider = context.AdditionalTextsProvider
-            .Where(f => Path.GetExtension(f.Path).Equals(".xml", StringComparison.OrdinalIgnoreCase))
+            .Where(f => Path.GetFileName(f.Path).EndsWith(".sui.xml", StringComparison.OrdinalIgnoreCase))
             .Select((file, _) =>
             {
                 try
@@ -75,13 +75,11 @@ internal partial class ComponentGenerator : IIncrementalGenerator
                     // 检查 Class 属性
                     using var reader = XmlReader.Create(new StringReader(str));
                     reader.MoveToContent();
+
                     if (reader.NodeType != XmlNodeType.Element) return null;
 
-                    // 检查根元素名字
-                    if (!string.Equals("Body", reader.Name)) return null;
-
                     // 检查 Class 属性
-                    var className = reader.GetAttribute("Class");
+                    var className = reader.GetAttribute("Class", XmlExtensions.SilkyUINamespace);
                     if (string.IsNullOrWhiteSpace(className)) return null;
 
                     return new { str, className };

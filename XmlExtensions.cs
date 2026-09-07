@@ -1,44 +1,53 @@
-﻿using System.Xml.Linq;
+using System.Xml.Linq;
 
 namespace SilkyUIAnalyzer;
 
 internal static class XmlExtensions
 {
-    private static HashSet<string> SpecialAttributes { get; } = ["Name", "Class", "Style"];
-    private static HashSet<string> SpecialElement { get; } = ["Style"];
     private static HashSet<string> SpecialElementHeader { get; } = ["Style", "M"];
-    // Bind.Text="Title" 这种属性名使用 Bind. 前缀声明数据绑定。
-    private const string BindingAttributePrefix = "Bind.";
 
-    public static bool IsCommonAttribute(this XAttribute attribute) => !SpecialAttributes.Contains(attribute.Name.LocalName);
+    public const string SilkyUINamespace = "https://github.com/487666123/SilkyUIFramework";
+    public const string BindingNamespace = "https://github.com/487666123/SilkyUIFramework/Binding";
+
+    public static bool IsSuiNameSpace(this XName name) => name.NamespaceName == SilkyUINamespace;
+
+    public static bool TryGetSuiAttribute(this XElement element, string localName, out XAttribute attribute)
+    {
+        attribute = element.Attributes()
+            .FirstOrDefault(attr =>
+                attr.Name.IsSuiNameSpace() &&
+                string.Equals(attr.Name.LocalName, localName));
+        return attribute != null;
+    }
+
+    public static HashSet<string> GetBindingPropertyNames(this IEnumerable<XAttribute> attributes)
+    {
+        var bindingPropertyNames = new HashSet<string>();
+
+        // 记录所有 bind:* 的目标属性，后续遇到同名静态赋值时直接跳过。
+        foreach (var attribute in attributes)
+        {
+            if (attribute.TryGetBindingPropertyName(out var propertyName))
+            {
+                bindingPropertyNames.Add(propertyName);
+            }
+        }
+
+        return bindingPropertyNames;
+    }
 
     /// <summary>
     /// 尝试获取绑定目标属性名称
     /// </summary>
-    public static bool TryGetBindingTargetPropertyName(this XAttribute attribute, out string propertyName)
+    public static bool TryGetBindingPropertyName(this XAttribute attribute, out string propertyName)
     {
-        var localName = attribute.Name.LocalName;
-
-        if (!localName.StartsWith(BindingAttributePrefix, StringComparison.Ordinal))
+        if (!string.Equals(attribute.Name.NamespaceName, BindingNamespace, StringComparison.Ordinal))
         {
             propertyName = string.Empty;
             return false;
         }
 
-        propertyName = localName.Substring(BindingAttributePrefix.Length);
+        propertyName = attribute.Name.LocalName;
         return !string.IsNullOrWhiteSpace(propertyName);
-    }
-
-    /// <summary>
-    /// 会过滤掉 Style 元素和 M. 开头的元素
-    /// </summary>
-    public static bool IsCommonElement(this XElement element)
-    {
-        var localName = element.Name.LocalName;
-
-        if (SpecialElementHeader.Any(header => localName.StartsWith($"{header}."))) return false;
-        if (SpecialElement.Contains(localName)) return false;
-
-        return true;
     }
 }
