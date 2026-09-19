@@ -20,9 +20,9 @@ internal partial class ComponentGenerator : IIncrementalGenerator
     private const string XmlMappingName = $"{AssemblyName}.Attributes.XmlElementMappingAttribute";
 
     /// <summary>
-    /// UI 元素组 [CLR 元数据名称]
+    /// 元素容器接口 [CLR 元数据名称]
     /// </summary>
-    private const string UIElementGroupName = $"{AssemblyName}.Elements.UIElementGroup";
+    private const string ContainerName = $"{AssemblyName}.Interfaces.IContainer`1";
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
@@ -92,18 +92,20 @@ internal partial class ComponentGenerator : IIncrementalGenerator
                 predicate: static (syntaxNode, _) => syntaxNode is ClassDeclarationSyntax,
                 transform: static (context, _) =>
                     context.SemanticModel.GetDeclaredSymbol(context.Node) as INamedTypeSymbol)
-            .Where(symbol => symbol.InheritsFrom(UIElementGroupName)).Collect();
+            .Where(symbol => symbol != null).Collect();
 
         // 找到 XML 绑定的 Class 的 TypeSymbol, 并筛选掉类型映射失败的组
-        var source = xmlProvider.Combine(classSyntaxProvider).Combine(mapping)
+        var source = xmlProvider.Combine(classSyntaxProvider).Combine(mapping).Combine(context.CompilationProvider)
             .Select((pair, _) =>
             {
-                var ((xml, typeSymbols), mappings) = pair;
+                var (((xml, typeSymbols), mappings), compilation) = pair;
+                var containerType = compilation.GetTypesByMetadataName(ContainerName)
+                    .FirstOrDefault(type => type.ContainingAssembly.Name == AssemblyName);
                 var typeSymbol = typeSymbols.FirstOrDefault(symbols => symbols.ToDisplayString().Equals(xml.className));
 
-                if (typeSymbol == null) return null;
+                if (mappings == null || !typeSymbol.GetConstructedInterfaces(containerType).Any()) return null;
 
-                return new { xml.str, typeSymbol, mappings };
+                return new { xml.str, typeSymbol, mappings, compilation, containerType };
             }).Where(input => input != null);
 
         // 注册源输出
@@ -114,7 +116,8 @@ internal partial class ComponentGenerator : IIncrementalGenerator
                 // 解析 Xml
                 var document = XDocument.Parse(sourceInput.str);
 
-                var logic = new ComponentGeneratorLogic(sourceInput.mappings);
+                var logic = new ComponentGeneratorLogic(sourceInput.mappings, sourceInput.compilation,
+                    sourceInput.containerType, spc.ReportDiagnostic);
                 var code = logic.GenerateComponentCode(document.Root, sourceInput.typeSymbol);
 
                 spc.AddSource($"{sourceInput.typeSymbol.ToDisplayString()}.g.cs", SourceText.From(code, System.Text.Encoding.UTF8));

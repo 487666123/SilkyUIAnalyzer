@@ -25,21 +25,21 @@ internal static class ITypeSymbolExtensions
         }
 
         /// <summary>
-        /// 遍历类型的 BaseType 链<br/>
-        /// 如果找到与指定全名匹配的类型，则返回 true<br/>
-        /// 如果到达最顶层 Object 类型仍未匹配，则返回 false
+        /// 获取类型实现的指定泛型接口，包括继承的接口和接口类型自身。
         /// </summary>
-        public bool InheritsFrom(string baseTypeFullName)
+        public IEnumerable<INamedTypeSymbol> GetConstructedInterfaces(INamedTypeSymbol interfaceDefinition)
         {
-            var baseType = typeSymbol.BaseType;
-            while (baseType != null)
-            {
-                if (baseType.ToDisplayString() == baseTypeFullName)
-                    return true;
-                baseType = baseType.BaseType;
-            }
+            if (typeSymbol == null || interfaceDefinition == null) yield break;
 
-            return false;
+            if (typeSymbol.TypeKind == TypeKind.Interface &&
+                SymbolEqualityComparer.Default.Equals(typeSymbol.OriginalDefinition, interfaceDefinition))
+                yield return typeSymbol;
+
+            foreach (var interfaceType in typeSymbol.AllInterfaces)
+            {
+                if (SymbolEqualityComparer.Default.Equals(interfaceType.OriginalDefinition, interfaceDefinition))
+                    yield return interfaceType;
+            }
         }
     }
 

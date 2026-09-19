@@ -9,8 +9,22 @@ namespace SilkyUIAnalyzer;
 /// 组件生成器逻辑类，负责将 XML 元素映射为 C# 代码
 /// </summary>
 /// <param name="aliasToTypeSymbolMapping">别名到类型符号的映射字典</param>
-internal class ComponentGeneratorLogic(ImmutableDictionary<string, INamedTypeSymbol> aliasToTypeSymbolMapping)
+/// <param name="compilation">用于检查子元素到容器参数类型的隐式转换</param>
+/// <param name="containerDefinition">IContainer&lt;T&gt; 的泛型定义</param>
+/// <param name="reportDiagnostic">报告不合法的子元素关系</param>
+internal class ComponentGeneratorLogic(ImmutableDictionary<string, INamedTypeSymbol> aliasToTypeSymbolMapping,
+    Compilation compilation, INamedTypeSymbol containerDefinition, Action<Diagnostic> reportDiagnostic)
 {
+    private static readonly DiagnosticDescriptor UnsupportedChild = new(
+        "SUI001", "容器无法接收子元素",
+        "类型“{0}”未实现可接收子元素类型“{1}”的 IContainer<T> 接口",
+        "SilkyUI", DiagnosticSeverity.Error, isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor AmbiguousContainer = new(
+        "SUI002", "容器接口匹配不明确",
+        "类型“{0}”实现了多个可接收子元素类型“{1}”的 IContainer<T> 接口，无法确定唯一的最具体接口",
+        "SilkyUI", DiagnosticSeverity.Error, isEnabledByDefault: true);
+
     private int _variableCounter = 0;
 
     private readonly HashSet<string> ValidMemberName = [];
@@ -137,6 +151,8 @@ internal class ComponentGeneratorLogic(ImmutableDictionary<string, INamedTypeSym
         foreach (var item in element.Elements().Where(e => !e.Name.IsSuiNameSpace()))
         {
             if (!TryGetNamedTypeSymbol(item, out var itemTypeSymbol)) continue;
+            var containerInterface = GetContainerInterface(typeSymbol, itemTypeSymbol);
+            if (containerInterface == null) continue;
 
             var itemVariableName = $"element{++_variableCounter}";
 
@@ -149,10 +165,43 @@ internal class ComponentGeneratorLogic(ImmutableDictionary<string, INamedTypeSym
                 code.AppendLine($"{indent}{nameAttr.Value} = {itemVariableName};");
             }
 
-            code.AppendLine($"{indent}{variableName}.AddChild({itemVariableName});");
+            var containerTypeName = containerInterface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            code.AppendLine($"{indent}(({containerTypeName}){variableName}).Add({itemVariableName});");
         }
 
         return code.ToString();
+    }
+
+    // 根据子元素类型选择容器接口，避免依赖公开 Add 方法或接口枚举顺序。
+    private INamedTypeSymbol GetContainerInterface(INamedTypeSymbol parentType, INamedTypeSymbol childType)
+    {
+        var candidates = parentType.GetConstructedInterfaces(containerDefinition)
+            .Where(type => compilation.ClassifyCommonConversion(childType, type.TypeArguments[0]).IsImplicit)
+            .ToArray();
+
+        if (candidates.Length == 0)
+        {
+            reportDiagnostic(Diagnostic.Create(UnsupportedChild, Location.None,
+                parentType.ToDisplayString(), childType.ToDisplayString()));
+            return null;
+        }
+
+        var exactMatch = candidates.FirstOrDefault(type =>
+            SymbolEqualityComparer.Default.Equals(type.TypeArguments[0], childType));
+        if (exactMatch != null) return exactMatch;
+
+        // 例如同时实现 IContainer<object> 和 IContainer<UIView> 时，优先选择 UIView。
+        var bestMatches = candidates.Where(candidate => candidates.All(other =>
+            SymbolEqualityComparer.Default.Equals(candidate, other) ||
+            (compilation.ClassifyCommonConversion(candidate.TypeArguments[0], other.TypeArguments[0]).IsImplicit &&
+             !compilation.ClassifyCommonConversion(other.TypeArguments[0], candidate.TypeArguments[0]).IsImplicit)))
+            .ToArray();
+
+        if (bestMatches.Length == 1) return bestMatches[0];
+
+        reportDiagnostic(Diagnostic.Create(AmbiguousContainer, Location.None,
+            parentType.ToDisplayString(), childType.ToDisplayString()));
+        return null;
     }
 
     // 生成 XML 属性到 C# 对象属性的赋值代码
