@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Text;
 using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
@@ -8,12 +7,12 @@ namespace SilkyUIAnalyzer;
 /// <summary>
 /// 组件生成器逻辑类，负责将 XML 元素映射为 C# 代码
 /// </summary>
-/// <param name="aliasToTypeSymbolMapping">别名到类型符号的映射字典</param>
+/// <param name="typeResolver">标签别名及 CLR 类型的统一解析器</param>
 /// <param name="compilation">用于检查子元素到容器参数类型的隐式转换</param>
 /// <param name="containerDefinition">IContainer&lt;T&gt; 的泛型定义</param>
-/// <param name="reportDiagnostic">报告不合法的子元素关系</param>
-internal class ComponentGeneratorLogic(ImmutableDictionary<string, INamedTypeSymbol> aliasToTypeSymbolMapping,
-    Compilation compilation, INamedTypeSymbol containerDefinition, Action<Diagnostic> reportDiagnostic)
+/// <param name="diagnostics">带 XML 位置的诊断报告器</param>
+internal class ComponentGeneratorLogic(XmlTypeResolver typeResolver,
+    Compilation compilation, INamedTypeSymbol containerDefinition, XmlDiagnosticReporter diagnostics)
 {
     private static readonly DiagnosticDescriptor UnsupportedChild = new(
         "SUI001", "容器无法接收子元素",
@@ -31,50 +30,39 @@ internal class ComponentGeneratorLogic(ImmutableDictionary<string, INamedTypeSym
 
     public Dictionary<string, XAttribute[]> StaticStyles { get; } = [];
 
-    private ImmutableDictionary<string, INamedTypeSymbol> AliasToTypeSymbolMapping { get; } = aliasToTypeSymbolMapping;
-
-    public bool TryGetNamedTypeSymbol(XElement element, out INamedTypeSymbol namedType)
-    {
-        return AliasToTypeSymbolMapping.TryGetValue(element.Name.LocalName, out namedType);
-    }
-
     /// <summary>
     /// 生成完整的UI组件代码，包括命名空间、类定义和初始化方法
     /// </summary>
     public string GenerateComponentCode(XElement root, INamedTypeSymbol typeSymbol)
     {
-        try
-        {
-            CollectStaticStyles(root);
+        CollectStaticStyles(root);
 
-            var code = new StringBuilder().AppendLine(
-                $$"""
-                  namespace {{typeSymbol.ContainingNamespace.ToDisplayString()}}
+        var code = new StringBuilder().AppendLine(
+            $$"""
+              namespace {{typeSymbol.ContainingNamespace.ToDisplayString()}}
+              {
+                  {{typeSymbol.DeclaredAccessibility.ToString().ToLowerInvariant()}} partial class {{typeSymbol.Name}}
                   {
-                      {{typeSymbol.DeclaredAccessibility.ToString().ToLowerInvariant()}} partial class {{typeSymbol.Name}}
+                      // GeneratePropertyDeclarationsRecursively
+              {{GeneratePropertyDeclarationsRecursively(root, 8)}}
+
+                      private bool _contentLoaded;
+
+                      private void InitializeComponent()
                       {
-                          // GeneratePropertyDeclarationsRecursively
-                  {{GeneratePropertyDeclarationsRecursively(root, 8)}}
+                          if (_contentLoaded) return;
+                          _contentLoaded = true;
 
-                          private bool _contentLoaded;
+                          // GenerateElementInitialization
+              {{GenerateElementInitialization(typeSymbol, root, "this", 12)}}
+              """);
 
-                          private void InitializeComponent()
-                          {
-                              if (_contentLoaded) return;
-                              _contentLoaded = true;
-
-                              // GenerateElementInitialization
-                  {{GenerateElementInitialization(typeSymbol, root, "this", 12)}}
-                  """);
-
-            return code.AppendLine(
-                $$"""
-                          }
+        return code.AppendLine(
+            $$"""
                       }
                   }
-                  """).ToString();
-        }
-        catch { return string.Empty; }
+              }
+              """).ToString();
     }
 
     /// <summary>
@@ -118,11 +106,13 @@ internal class ComponentGeneratorLogic(ImmutableDictionary<string, INamedTypeSym
         foreach (var element in parent.Elements().Where(e => !e.Name.IsSuiNameSpace()))
         {
             if (element.TryGetSuiAttribute("Name", out var nameAttr) &&
-                ParseHelper.IsValidMemberName(nameAttr.Value) && ValidMemberName.Add(nameAttr.Value) &&
-                TryGetNamedTypeSymbol(element, out var typeSymbol))
+                ParseHelper.IsValidMemberName(nameAttr.Value) && !element.Name.IsPropertyElement() &&
+                typeResolver.TryResolve(element, out var typeSymbol) && ValidMemberName.Add(nameAttr.Value))
             {
                 var typeGlobalName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-                code.AppendLine($$"""{{indent}}public {{typeGlobalName}} {{nameAttr.Value}} { get; private set; }""");
+                var accessibility = ClrXmlNamespace.IsClrNamespace(element.Name.NamespaceName) &&
+                    typeSymbol.DeclaredAccessibility != Accessibility.Public ? "internal" : "public";
+                code.AppendLine($$"""{{indent}}{{accessibility}} {{typeGlobalName}} {{nameAttr.Value}} { get; private set; }""");
             }
 
             if (element.HasElements)
@@ -150,8 +140,9 @@ internal class ComponentGeneratorLogic(ImmutableDictionary<string, INamedTypeSym
 
         foreach (var item in element.Elements().Where(e => !e.Name.IsSuiNameSpace()))
         {
-            if (!TryGetNamedTypeSymbol(item, out var itemTypeSymbol)) continue;
-            var containerInterface = GetContainerInterface(typeSymbol, itemTypeSymbol);
+            if (item.Name.IsPropertyElement()) continue;
+            if (!typeResolver.TryResolve(item, out var itemTypeSymbol)) continue;
+            var containerInterface = GetContainerInterface(typeSymbol, itemTypeSymbol, item);
             if (containerInterface == null) continue;
 
             var itemVariableName = $"element{++_variableCounter}";
@@ -173,7 +164,7 @@ internal class ComponentGeneratorLogic(ImmutableDictionary<string, INamedTypeSym
     }
 
     // 根据子元素类型选择容器接口，避免依赖公开 Add 方法或接口枚举顺序。
-    private INamedTypeSymbol GetContainerInterface(INamedTypeSymbol parentType, INamedTypeSymbol childType)
+    private INamedTypeSymbol GetContainerInterface(INamedTypeSymbol parentType, INamedTypeSymbol childType, XElement element)
     {
         var candidates = parentType.GetConstructedInterfaces(containerDefinition)
             .Where(type => compilation.ClassifyCommonConversion(childType, type.TypeArguments[0]).IsImplicit)
@@ -181,8 +172,7 @@ internal class ComponentGeneratorLogic(ImmutableDictionary<string, INamedTypeSym
 
         if (candidates.Length == 0)
         {
-            reportDiagnostic(Diagnostic.Create(UnsupportedChild, Location.None,
-                parentType.ToDisplayString(), childType.ToDisplayString()));
+            diagnostics.Report(UnsupportedChild, element, parentType.ToDisplayString(), childType.ToDisplayString());
             return null;
         }
 
@@ -199,8 +189,7 @@ internal class ComponentGeneratorLogic(ImmutableDictionary<string, INamedTypeSym
 
         if (bestMatches.Length == 1) return bestMatches[0];
 
-        reportDiagnostic(Diagnostic.Create(AmbiguousContainer, Location.None,
-            parentType.ToDisplayString(), childType.ToDisplayString()));
+        diagnostics.Report(AmbiguousContainer, element, parentType.ToDisplayString(), childType.ToDisplayString());
         return null;
     }
 
@@ -213,10 +202,10 @@ internal class ComponentGeneratorLogic(ImmutableDictionary<string, INamedTypeSym
 
         variableName ??= "this";
 
-        // 特殊匹配 M.* 的成员属性，递归处理子元素
-        foreach (var item in element.Elements().Where(e => e.Name.LocalName.StartsWith("M.")))
+        // Properties 命名空间元素展开父对象已有的属性，递归配置该属性对象。
+        foreach (var item in element.Elements().Where(e => e.Name.IsPropertyElement()))
         {
-            var memberName = item.Name.LocalName.Substring(2);
+            var memberName = item.Name.LocalName;
 
             if (string.IsNullOrWhiteSpace(memberName)) continue;
             if (typeSymbol.GetFirstMembers(memberName) is not IPropertySymbol propSymbol) continue;

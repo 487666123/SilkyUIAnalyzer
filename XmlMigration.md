@@ -113,16 +113,22 @@ https://github.com/487666123/SilkyUIFramework/Binding
 
 生成器只为 `Text` 生成绑定调用，不再生成静态赋值。
 
-## 7. M.* 不需要迁移
+## 7. 属性展开使用 Properties 命名空间
 
-`M.*` 是成员属性语法，不属于本次命名空间迁移范围，继续原样使用：
+在根元素声明：
 
 ```xml
-<M.Mask />
-<M.Container FlexDirection="Column" />
+xmlns:prop="https://github.com/487666123/SilkyUIFramework/Properties"
 ```
 
-不要把它改成 `M:Mask` 或 `m:Mask`。未来如果设计新的 `m:` 语法，会另行提供迁移说明。
+属性展开统一写成：
+
+```xml
+<prop:Mask />
+<prop:Container FlexDirection="Column" />
+```
+
+这些节点访问父对象已有的属性，不创建新对象。`prop` 可替换为其他绑定到同一 URI 的前缀；多层属性使用逐层嵌套。
 
 ## 8. 完整示例
 
@@ -130,12 +136,13 @@ https://github.com/487666123/SilkyUIFramework/Binding
 <?xml version="1.0" encoding="utf-8"?>
 <Body xmlns:sui="https://github.com/487666123/SilkyUIFramework"
       xmlns:bind="https://github.com/487666123/SilkyUIFramework/Binding"
+      xmlns:prop="https://github.com/487666123/SilkyUIFramework/Properties"
       sui:Class="MyMod.Views.MainPanel">
     <sui:Style sui:Name="BasePanel" Width="300" Height="200" />
 
     <TextView sui:Name="Title" bind:Text="Title" />
     <Panel sui:Style="BasePanel">
-        <M.Container FlexDirection="Column" />
+        <prop:Container FlexDirection="Column" />
     </Panel>
 </Body>
 ```
@@ -148,5 +155,5 @@ https://github.com/487666123/SilkyUIFramework/Binding
 - 用于生成 C# 控件属性的 `Name` 已改为 `sui:Name`。
 - `Style` 已改为 `sui:Style`，样式定义已改为 `sui:Style` 元素。
 - `Bind.*` 已改为 `bind:*`，并声明 Binding URI。
-- `M.*` 保持原样。
+- 属性展开使用 `prop:*`，并声明 Properties URI。
 - 源属性名仍需根据运行时绑定对象确认，Analyzer 不会验证源属性是否存在。

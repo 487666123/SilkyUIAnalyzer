@@ -4,12 +4,13 @@ namespace SilkyUIAnalyzer;
 
 internal static class XmlExtensions
 {
-    private static HashSet<string> SpecialElementHeader { get; } = ["Style", "M"];
-
     public const string SilkyUINamespace = "https://github.com/487666123/SilkyUIFramework";
     public const string BindingNamespace = "https://github.com/487666123/SilkyUIFramework/Binding";
+    public const string PropertiesNamespace = "https://github.com/487666123/SilkyUIFramework/Properties";
 
     public static bool IsSuiNameSpace(this XName name) => name.NamespaceName == SilkyUINamespace;
+
+    public static bool IsPropertyElement(this XName name) => name.NamespaceName == PropertiesNamespace;
 
     public static bool TryGetSuiAttribute(this XElement element, string localName, out XAttribute attribute)
     {

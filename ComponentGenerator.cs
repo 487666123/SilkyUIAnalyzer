@@ -60,69 +60,51 @@ internal partial class ComponentGenerator : IIncrementalGenerator
             return map.ToImmutableDictionary();
         });
 
-        // 筛选 .sui.xml 后缀的文件
-        // 转换为 Xml Document
+        // 保留源路径和文本，以便为 XML 解析和类型错误报告准确位置。
         var xmlProvider = context.AdditionalTextsProvider
-            .Where(f => Path.GetFileName(f.Path).EndsWith(".sui.xml", StringComparison.OrdinalIgnoreCase))
-            .Select((file, _) =>
-            {
-                try
-                {
-                    var str = file.GetText().ToString();
-                    //[?] Xml 必有开头哪一行，所以可以设置一个 Length 最小检测
-                    if (string.IsNullOrWhiteSpace(str)) return null;
+            .Where(file => Path.GetFileName(file.Path).EndsWith(".sui.xml", StringComparison.OrdinalIgnoreCase))
+            .Select((file, cancellationToken) => new { file.Path, Text = file.GetText(cancellationToken) })
+            .Where(file => file.Text != null);
 
-                    // 检查 Class 属性
-                    using var reader = XmlReader.Create(new StringReader(str));
-                    reader.MoveToContent();
-
-                    if (reader.NodeType != XmlNodeType.Element) return null;
-
-                    // 检查 Class 属性
-                    var className = reader.GetAttribute("Class", XmlExtensions.SilkyUINamespace);
-                    if (string.IsNullOrWhiteSpace(className)) return null;
-
-                    return new { str, className };
-                }
-                catch { return null; }
-            }).Where(doc => doc != null);
-
-        // 所有类语法
         var classSyntaxProvider = context.SyntaxProvider.CreateSyntaxProvider(
                 predicate: static (syntaxNode, _) => syntaxNode is ClassDeclarationSyntax,
                 transform: static (context, _) =>
                     context.SemanticModel.GetDeclaredSymbol(context.Node) as INamedTypeSymbol)
             .Where(symbol => symbol != null).Collect();
 
-        // 找到 XML 绑定的 Class 的 TypeSymbol, 并筛选掉类型映射失败的组
-        var source = xmlProvider.Combine(classSyntaxProvider).Combine(mapping).Combine(context.CompilationProvider)
-            .Select((pair, _) =>
-            {
-                var (((xml, typeSymbols), mappings), compilation) = pair;
-                var containerType = compilation.GetTypesByMetadataName(ContainerName)
-                    .FirstOrDefault(type => type.ContainingAssembly.Name == AssemblyName);
-                var typeSymbol = typeSymbols.FirstOrDefault(symbols => symbols.ToDisplayString().Equals(xml.className));
-
-                if (mappings == null || !typeSymbol.GetConstructedInterfaces(containerType).Any()) return null;
-
-                return new { xml.str, typeSymbol, mappings, compilation, containerType };
-            }).Where(input => input != null);
-
-        // 注册源输出
-        context.RegisterSourceOutput(source, (spc, sourceInput) =>
+        var source = xmlProvider.Combine(classSyntaxProvider).Combine(mapping).Combine(context.CompilationProvider);
+        context.RegisterSourceOutput(source, (spc, input) =>
         {
+            var (((xml, typeSymbols), mappings), compilation) = input;
+            var diagnostics = new XmlDiagnosticReporter(xml.Path, xml.Text, spc.ReportDiagnostic);
+            XDocument document = null;
             try
             {
-                // 解析 Xml
-                var document = XDocument.Parse(sourceInput.str);
+                document = XDocument.Parse(xml.Text.ToString(), LoadOptions.SetLineInfo);
+                var root = document.Root;
+                if (root == null || !root.TryGetSuiAttribute("Class", out var classAttribute)) return;
+                var typeSymbol = typeSymbols.FirstOrDefault(symbol => symbol.ToDisplayString() == classAttribute.Value);
+                var containerType = compilation.GetTypesByMetadataName(ContainerName)
+                    .FirstOrDefault(type => type.ContainingAssembly.Name == AssemblyName);
 
-                var logic = new ComponentGeneratorLogic(sourceInput.mappings, sourceInput.compilation,
-                    sourceInput.containerType, spc.ReportDiagnostic);
-                var code = logic.GenerateComponentCode(document.Root, sourceInput.typeSymbol);
+                // 保持原有根类约束；CLR 导入只扩展子元素的类型解析。
+                if (mappings == null || !typeSymbol.GetConstructedInterfaces(containerType).Any()) return;
 
-                spc.AddSource($"{sourceInput.typeSymbol.ToDisplayString()}.g.cs", SourceText.From(code, System.Text.Encoding.UTF8));
+                var resolver = new XmlTypeResolver(compilation, typeSymbol, mappings, diagnostics);
+                resolver.ValidateDeclarations(root);
+                var logic = new ComponentGeneratorLogic(resolver, compilation, containerType, diagnostics);
+                var code = logic.GenerateComponentCode(root, typeSymbol);
+                spc.AddSource($"{typeSymbol.ToDisplayString()}.g.cs", SourceText.From(code, System.Text.Encoding.UTF8));
             }
-            catch { }
+            catch (XmlException exception)
+            {
+                diagnostics.ReportXmlException(exception);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception exception)
+            {
+                diagnostics.Report(XmlDiagnosticReporter.GenerationFailed, document?.Root, exception.Message);
+            }
         });
     }
 }
